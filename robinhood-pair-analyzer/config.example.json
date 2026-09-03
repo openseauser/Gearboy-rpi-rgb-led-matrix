@@ -1,11 +1,11 @@
 {
-  "_comment": "Copy to config.json and fill in. Run `python monitor.py --discover` first to find live factory addresses and the wrapped-native token on Robinhood Chain.",
+  "_comment": "Copy to config.json. Uniswap addresses below are Robinhood Chain mainnet (chain 4663) from Uniswap's official sdk-core (V2_FACTORY_ADDRESSES / V2_ROUTER_ADDRESSES / WETH9); cross-check with `python monitor.py --discover`, which should show the v2 factory emitting pairs and WETH as the top quote token.",
 
   "rpc_url": "https://rpc.mainnet.chain.robinhood.com",
   "chain_id": 4663,
   "explorer_base": "https://robinhoodchain.blockscout.com",
 
-  "wrapped_native": "",
+  "wrapped_native": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
   "native_symbol": "ETH",
   "native_usd_price": 0,
   "coingecko_native_id": "ethereum",
@@ -15,9 +15,9 @@
     "_example_0xUSDC": { "symbol": "USDC", "usd": 1.0 }
   },
 
-  "v2_factories": [],
-  "v3_factories": [],
-  "v2_router": "",
+  "v2_factories": ["0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f"],
+  "v3_factories": ["0x1f7d7550B1b028f7571E69A784071F0205FD2EfA"],
+  "v2_router": "0x89e5DB8B5aA49aA85AC63f691524311AEB649eba",
 
   "known_lockers": [],
 

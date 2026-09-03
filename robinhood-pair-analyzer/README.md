@@ -22,32 +22,39 @@ pip install -r requirements.txt
 cp config.example.json config.json
 ```
 
-## 1. Find the live contract addresses
+## 1. Verify the contract addresses
 
-The tool never hardcodes DEX addresses (wrong addresses would silently watch
-nothing). Discover them from the chain itself:
+`config.example.json` ships with the Uniswap mainnet deployment on Robinhood
+Chain (chain 4663), taken from Uniswap's official `sdk-core` address maps
+(`V2_FACTORY_ADDRESSES`, `V2_ROUTER_ADDRESSES`, `WETH9` in
+https://github.com/Uniswap/sdks — `sdks/sdk-core/src/addresses.ts`):
+
+| contract | address |
+|---|---|
+| Uniswap v2 factory | `0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f` |
+| Uniswap v2 Router02 | `0x89e5DB8B5aA49aA85AC63f691524311AEB649eba` |
+| Uniswap v3 factory | `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA` |
+| WETH (wrapped native) | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+
+Cross-check before trusting them with attention (addresses drift; other DEXes
+may launch):
 
 ```bash
 python monitor.py --discover
 ```
 
-This scans recent blocks for `PairCreated` / `PoolCreated` events with no
-address filter and prints every factory that's actually emitting, plus the
-most common pair-side token — which is almost certainly the wrapped native
-(WETH). Fill `v2_factories`, `v3_factories`, `wrapped_native`, and `v2_router`
-in `config.json`. Cross-check against:
+This scans recent blocks for `PairCreated` / `PoolCreated` events with **no
+address filter** and prints every factory actually emitting pairs, plus the
+most common pair-side token — the v2 factory and WETH above should top those
+lists. If discover shows a busier factory, add it. Also worth a glance:
+Robinhood's contract docs (https://docs.robinhood.com/chain/contracts) and
+the explorer (https://robinhoodchain.blockscout.com — the router should be
+verified as `UniswapV2Router02`).
 
-- Robinhood's contract docs: https://docs.robinhood.com/chain/contracts
-- Uniswap's official deployments page (v2/v3/v4 are live on Robinhood Chain):
-  https://blog.uniswap.org/robinhood-chain-is-live
-- The explorer: https://robinhoodchain.blockscout.com
-
-The router isn't discoverable from events — take it from the Uniswap
-deployments page or a recent swap tx on the explorer. Many launches on
-Robinhood Chain pair against tokenized stocks (long.xyz / Bankr style); add
-those you care about to `quote_tokens` (with a rough USD price, or 0 to skip
-USD figures), otherwise stock-paired launches are reported as
-"unknown quote" and skipped.
+Many launches on Robinhood Chain pair against tokenized stocks
+(long.xyz / Bankr style); add those you care about to `quote_tokens` (with a
+rough USD price, or 0 to skip USD figures), otherwise stock-paired launches
+are reported as "unknown quote" and skipped.
 
 If you use a locker service (Team Finance, UNCX, …), put its Robinhood Chain
 contract addresses in `known_lockers` so locked LP counts as safe instead of
