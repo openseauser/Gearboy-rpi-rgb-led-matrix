@@ -116,6 +116,29 @@ concentration) recalibrate to this chain's actual winner percentiles.
 much better data, but needs an archive-capable RPC (public endpoints often
 prune old state; it falls back to current state per pair and says so).
 
+## Large early liquidity adds
+
+```bash
+python liquidity_watch.py                # live alerts, runs fine next to monitor.py
+python liquidity_watch.py --days 7       # history: big early adds + how each turned out
+```
+
+Watches chain-wide v2 `Mint` events (every liquidity add emits one), keeps
+only pairs belonging to your configured factories, and alerts when a single
+add ≥ `--min-usd` (default $25k) lands in a pair ≤ `--max-age-hours` old
+(default 12). Each alert shows the add's share of the pool and who received
+the LP tokens (burned on arrival ✓ / known locker ✓ / a wallet that can pull
+it). History mode ranks past early adds and fetches each pair's current
+liquidity/FDV so you can see whether big-money launches on this chain
+actually survive.
+
+Mind the FDV trap this script exists to expose: a coin "starting at a few
+million" is a few-million **FDV**, which needs almost no real money if most
+supply sits outside the pool — alerts flag when FDV is >20× actual
+liquidity. Add size measures the launcher's committed budget (or a
+launchpad graduation), not safety; cross-check the pair in monitor.py
+before acting.
+
 ## How scoring works
 
 **Hard flags** force `AVOID` (score capped at 10):
@@ -167,6 +190,7 @@ it, it can still answer "does the sell revert", and taxes stay unknown.
 
 ```
 monitor.py          live monitor + --discover
+liquidity_watch.py  alerts on large liquidity adds into young pairs (+ history mode)
 backfill.py         historical launch scan → outcome-labeled dataset
 profile_winners.py  winners-vs-rugs feature profile → profile.json
 selftest.py         offline checks (run after any edit)

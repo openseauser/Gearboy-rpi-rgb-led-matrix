@@ -144,6 +144,32 @@ def main():
     check("profile calibration tightens liquidity bar", rc_cal["score"] < rc["score"],
           f"{rc_cal['score']} vs {rc['score']}")
 
+    # 5b. liquidity_watch: Mint decode + quote-side sizing
+    from liquidity_watch import add_amounts, decode_mint
+
+    mlog = {
+        "address": "0x00000000000000000000000000000000000000C3",
+        "topics": [chain.TOPIC_MINT_V2, "0x" + abi_encode(["address"], [addr]).hex()],
+        "data": "0x" + abi_encode(["uint256", "uint256"], [5 * 10**18, 9 * 10**6]).hex(),
+        "blockNumber": hex(777),
+        "transactionHash": "0x" + "cd" * 32,
+        "logIndex": "0x1",
+    }
+    mint = decode_mint(mlog)
+    check(
+        "decode_mint round-trip",
+        mint["amount0"] == 5 * 10**18 and mint["amount1"] == 9 * 10**6
+        and mint["block"] == 777 and mint["sender"] == Web3.to_checksum_address(addr),
+        str(mint),
+    )
+    meta_q0 = {"quote_is_token0": True, "quote_decimals": 18}
+    meta_q1 = {"quote_is_token0": False, "quote_decimals": 6}
+    check(
+        "add_amounts picks the quote side with its decimals",
+        add_amounts(meta_q0, mint) == 5.0 and add_amounts(meta_q1, mint) == 9.0,
+        f"{add_amounts(meta_q0, mint)} / {add_amounts(meta_q1, mint)}",
+    )
+
     # 6. checkpoint delta / rug math
     d = checkpoint_delta({"liquidity_quote": 10.0, "creator_token_pct": 10.0},
                          {"liquidity_quote": 1.5, "creator_token_pct": 2.0})
