@@ -1,0 +1,41 @@
+{
+  "_comment": "Copy to config.json and fill in. Run `python monitor.py --discover` first to find live factory addresses and the wrapped-native token on Robinhood Chain.",
+
+  "rpc_url": "https://rpc.mainnet.chain.robinhood.com",
+  "chain_id": 4663,
+  "explorer_base": "https://robinhoodchain.blockscout.com",
+
+  "wrapped_native": "",
+  "native_symbol": "ETH",
+  "native_usd_price": 0,
+  "coingecko_native_id": "ethereum",
+
+  "quote_tokens": {
+    "_comment": "Extra quote-side tokens beyond wrapped native, e.g. USDC or tokenized stocks used by long.xyz/Bankr pools. usd=0 means price unknown (liquidity reported in quote units only).",
+    "_example_0xUSDC": { "symbol": "USDC", "usd": 1.0 }
+  },
+
+  "v2_factories": [],
+  "v3_factories": [],
+  "v2_router": "",
+
+  "known_lockers": [],
+
+  "poll_interval_sec": 6,
+  "confirmations": 2,
+  "logs_chunk_size": 4000,
+  "rpc_delay_sec": 0.05,
+
+  "watch_checkpoints_min": [2, 5, 15, 30, 60],
+  "watch_liquidity_drop_alert_pct": 70,
+
+  "probe_quote_fraction": 0.003,
+  "blacklist_is_hard_flag": true,
+
+  "min_initial_liquidity_usd": 2000,
+  "alert_min_score": 65,
+  "webhook_url": "",
+
+  "data_dir": "data",
+  "profile_file": ""
+}
