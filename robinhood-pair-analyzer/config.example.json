@@ -11,8 +11,11 @@
   "coingecko_native_id": "ethereum",
 
   "quote_tokens": {
-    "_comment": "Extra quote-side tokens beyond wrapped native, e.g. USDC or tokenized stocks used by long.xyz/Bankr pools. usd=0 means price unknown (liquidity reported in quote units only).",
-    "_example_0xUSDC": { "symbol": "USDC", "usd": 1.0 }
+    "_comment": "Extra quote-side tokens beyond wrapped native — on Robinhood Chain that's mostly tokenized stocks (long.xyz/Bankr pools). Key = token contract address; addresses below are from Uniswap's official default-token-list (src/tokens/robinhood.json), which has the full stock roster. Set usd to the rough current share price for USD reporting, or leave 0 to report liquidity in share units only. Decimals are read on-chain.",
+    "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC": { "symbol": "NVDA", "usd": 0 },
+    "0x322F0929c4625eD5bAd873c95208D54E1c003b2d": { "symbol": "TSLA", "usd": 0 },
+    "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9": { "symbol": "AAPL", "usd": 0 },
+    "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C": { "symbol": "SPY", "usd": 0 }
   },
 
   "v2_factories": ["0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f"],
