@@ -1,0 +1,694 @@
+diff --git a/typescript/.changeset/bazaar-schema-validation-no-codegen.md b/typescript/.changeset/bazaar-schema-validation-no-codegen.md
+new file mode 100644
+index 0000000..de2f622
+--- /dev/null
++++ b/typescript/.changeset/bazaar-schema-validation-no-codegen.md
+@@ -0,0 +1,7 @@
++---
++"@x402/extensions": patch
++---
++
++`validateDiscoveryExtension` now validates Bazaar extension info with an interpreting JSON Schema validator (`@cfworker/json-schema`) instead of compiling the route author's schema with Ajv on every call. Ajv's `compile` uses `new Function()`, which Cloudflare Workers forbid during request handling, so on workerd every valid extension was reported as `valid: false` ("Code generation from strings disallowed for this context") and each request paid for a failed compile. The validator now runs identically on Node, bundlers and Workers, never generates code at runtime, and has no per-call compilation step.
++
++Compatibility notes: `format` keywords stay annotation-only by default, as before; pass `{ assertFormats: true }` to enforce well-known formats (`uri`, `date-time`, `email`, `uuid`, ...). A non-object `schema` and a `$schema` other than JSON Schema 2020-12 are now rejected with explicit errors instead of failing at compile time. Fractional `multipleOf` divisors are compared with a small tolerance (0.3 is accepted as a multiple of 0.1), where the previous implementation compared the raw floating-point quotient and rejected such pairs. Validation error wording has changed.
+diff --git a/typescript/packages/extensions/package.json b/typescript/packages/extensions/package.json
+index ebc8c01..21c1832 100644
+--- a/typescript/packages/extensions/package.json
++++ b/typescript/packages/extensions/package.json
+@@ -45,6 +45,7 @@
+     "vitest": "^3.2.7"
+   },
+   "dependencies": {
++    "@cfworker/json-schema": "^4.1.1",
+     "@noble/curves": "^1.9.0",
+     "@scure/base": "^1.2.6",
+     "@signinwithethereum/siwe": "^4.1.0",
+diff --git a/typescript/packages/extensions/src/bazaar/README.md b/typescript/packages/extensions/src/bazaar/README.md
+index 5c8c0af..c94854f 100644
+--- a/typescript/packages/extensions/src/bazaar/README.md
++++ b/typescript/packages/extensions/src/bazaar/README.md
+@@ -422,6 +422,8 @@ type DiscoveredResource = DiscoveredHTTPResource | DiscoveredMCPResource;
+ 
+ Validates a discovery extension's info against its schema.
+ 
++Validation interprets the schema directly (no `new Function()` / `eval`), so it behaves the same on Node, in bundlers and on Cloudflare Workers, and there is no per-call compilation step. By default `format` is an annotation only (as in earlier versions); pass `{ assertFormats: true }` as the second argument to assert well-known string formats such as `uri` and `date-time`.
++
+ **Returns:** `{ valid: boolean, errors?: string[] }`
+ 
+ ### `validateAndExtract(extension)`
+diff --git a/typescript/packages/extensions/src/bazaar/facilitator.ts b/typescript/packages/extensions/src/bazaar/facilitator.ts
+index 083013e..0e2d273 100644
+--- a/typescript/packages/extensions/src/bazaar/facilitator.ts
++++ b/typescript/packages/extensions/src/bazaar/facilitator.ts
+@@ -8,7 +8,7 @@
+  */
+ 
+ import { domainToASCII } from "node:url";
+-import Ajv from "ajv/dist/2020.js";
++import { Validator, type Schema } from "@cfworker/json-schema";
+ import type {
+   PaymentPayload,
+   PaymentRequirements,
+@@ -338,12 +338,12 @@ export interface ValidationResult {
+  * Recursively scans a decoded JSON Schema document for "$ref"/"$id" values that are not
+  * same-document fragments (i.e. do not start with "#").
+  *
+- * Ajv's default `compile` throws rather than dereferencing an unregistered absolute/relative
+- * `$ref`, so this SDK does not fetch or read anything by default. This guard exists for
++ * The validator throws on an unregistered absolute/relative `$ref` rather than dereferencing
++ * it, so this SDK does not fetch or read anything by default. This guard exists for
+  * defense-in-depth and to give a consistent, explicit rejection message across all x402 SDKs,
+  * since schema is client-controlled (it arrives in the payment payload) and any external
+  * $ref/$id is a CWE-918 SSRF / local file disclosure pattern other JSON Schema tooling
+- * (including future Ajv options like `loadSchema`) can act on.
++ * (including validators with remote schema loading) can act on.
+  *
+  * @param node - The (sub)tree of a decoded JSON Schema document to scan
+  * @returns True if any non-fragment "$ref"/"$id" value is found
+@@ -367,10 +367,89 @@ function hasExternalSchemaReference(node: unknown): boolean {
+   return false;
+ }
+ 
++const SUPPORTED_SCHEMA_DIALECTS = new Set([
++  "https://json-schema.org/draft/2020-12/schema",
++  "https://json-schema.org/draft/2020-12/schema#",
++]);
++
++/**
++ * Options for {@link validateDiscoveryExtension}.
++ */
++export interface ValidateDiscoveryExtensionOptions {
++  /**
++   * When true, well-known string formats (`uri`, `date-time`, `email`, `uuid`, ...) are
++   * asserted. Defaults to false, where `format` is an annotation only: this matches the
++   * behaviour of @x402/extensions <= 2.25.0, whose Ajv instance had no format plugin and
++   * ignored the keyword, so existing payloads keep validating the same way.
++   */
++  assertFormats?: boolean;
++}
++
++/** Keywords whose value is a map of arbitrary names to subschemas. */
++const SCHEMA_MAP_KEYWORDS = new Set([
++  "properties",
++  "patternProperties",
++  "$defs",
++  "definitions",
++  "dependentSchemas",
++]);
++/** Keywords whose value is a single subschema. */
++const SCHEMA_KEYWORDS = new Set([
++  "items",
++  "additionalItems",
++  "additionalProperties",
++  "unevaluatedProperties",
++  "unevaluatedItems",
++  "contains",
++  "propertyNames",
++  "not",
++  "if",
++  "then",
++  "else",
++  "contentSchema",
++]);
++/** Keywords whose value is an array of subschemas. */
++const SCHEMA_ARRAY_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
++
++const formatStrippedSchemas = new WeakMap<object, Schema>();
++
++/**
++ * Returns a copy of `schema` with every `format` keyword removed from keyword positions.
++ * Property names, `const`/`enum`/`default` values and other data are left untouched, so a
++ * property literally called "format" is still validated.
++ *
++ * @param node - The schema (or subschema) to copy
++ * @returns The copy without format assertions; non-object nodes are returned as-is
++ */
++function withoutFormatAssertions(node: unknown): unknown {
++  if (typeof node !== "object" || node === null) return node;
++  if (Array.isArray(node)) return node.map(withoutFormatAssertions);
++  const out: Record<string, unknown> = {};
++  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
++    if (key === "format") continue;
++    if (SCHEMA_MAP_KEYWORDS.has(key) && typeof value === "object" && value !== null) {
++      const map: Record<string, unknown> = {};
++      for (const [name, sub] of Object.entries(value as Record<string, unknown>)) {
++        map[name] = withoutFormatAssertions(sub);
++      }
++      out[key] = map;
++    } else if (
++      SCHEMA_KEYWORDS.has(key) ||
++      (SCHEMA_ARRAY_KEYWORDS.has(key) && Array.isArray(value))
++    ) {
++      out[key] = withoutFormatAssertions(value);
++    } else {
++      out[key] = value;
++    }
++  }
++  return out;
++}
++
+ /**
+  * Validates a discovery extension's info against its schema
+  *
+  * @param extension - The discovery extension containing info and schema
++ * @param options - Optional validation switches (see {@link ValidateDiscoveryExtensionOptions})
+  * @returns Validation result indicating if the info matches the schema
+  *
+  * @example
+@@ -385,36 +464,83 @@ function hasExternalSchemaReference(node: unknown): boolean {
+  * }
+  * ```
+  */
+-export function validateDiscoveryExtension(extension: DiscoveryExtension): ValidationResult {
++export function validateDiscoveryExtension(
++  extension: DiscoveryExtension,
++  options: ValidateDiscoveryExtensionOptions = {},
++): ValidationResult {
+   try {
++    const schema: unknown = extension.schema;
++
++    // The interpreting validator treats a non-object schema as "no constraints" and would
++    // report any info as valid, so reject that shape explicitly instead of trusting it.
++    if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
++      return {
++        valid: false,
++        errors: ["schema must be a JSON Schema object"],
++      };
++    }
++
++    // The previous (Ajv 2020-12) implementation rejected any other declared dialect at
++    // compile time. Keep that explicit instead of silently validating with 2020-12 semantics.
++    const dialect = (schema as { $schema?: unknown }).$schema;
++    if (
++      dialect !== undefined &&
++      !(typeof dialect === "string" && SUPPORTED_SCHEMA_DIALECTS.has(dialect))
++    ) {
++      return {
++        valid: false,
++        errors: [
++          `schema declares an unsupported $schema dialect ${JSON.stringify(dialect)}; ` +
++            "only JSON Schema 2020-12 is supported",
++        ],
++      };
++    }
++
+     // The schema is attacker-controlled (it arrives in the client's payment payload). Only
+     // same-document fragment references (e.g. "#/definitions/foo") are safe, since they
+     // resolve against the in-memory document instead of fetching or reading anything.
+-    if (hasExternalSchemaReference(extension.schema)) {
++    if (hasExternalSchemaReference(schema)) {
+       return {
+         valid: false,
+         errors: ["schema must not contain external $ref/$id references"],
+       };
+     }
+ 
+-    const ajv = new Ajv({ strict: false, allErrors: true });
+-    const validate = ajv.compile(extension.schema);
++    // The schema is supplied at runtime by the route author, so nothing can be precompiled
++    // at build time. Use a validator that interprets the schema directly: it never calls
++    // `new Function()` / `eval`, so it runs on runtimes that forbid dynamic code generation
++    // (Cloudflare Workers, `node --disallow-code-generation-from-strings`, strict CSP) and
++    // there is no per-call compilation step to waste CPU on.
++    // Numeric `multipleOf` uses the interpreter's semantics: a fractional divisor is
++    // accepted when the quotient is within ~1.2e-7 of an integer (0.3 is a multiple of 0.1).
++    // The previous implementation compared the raw IEEE-754 quotient and rejected such pairs.
++    let effectiveSchema = schema as Schema;
++    if (!options.assertFormats) {
++      let stripped = formatStrippedSchemas.get(schema);
++      if (!stripped) {
++        stripped = withoutFormatAssertions(schema) as Schema;
++        formatStrippedSchemas.set(schema, stripped);
++      }
++      effectiveSchema = stripped;
++    }
++    const validator = new Validator(effectiveSchema, "2020-12", false);
+ 
+     // The schema describes the structure of info directly
+     // Schema has properties: { input: {...}, output: {...} }
+     // So we validate extension.info which has { input: {...}, output: {...} }
+-    const valid = validate(extension.info);
++    const result = validator.validate(extension.info);
+ 
+-    if (valid) {
++    if (result.valid) {
+       return { valid: true };
+     }
+ 
+-    const errors = validate.errors?.map(err => {
+-      const path = err.instancePath || "(root)";
+-      return `${path}: ${err.message}`;
+-    }) || ["Unknown validation error"];
++    const errors = result.errors.map(err => {
++      // "#/input/method" -> "/input/method"; "#" -> "(root)" (matches the previous format)
++      const path = err.instanceLocation.replace(/^#/, "") || "(root)";
++      return `${path}: ${err.error}`;
++    });
+ 
+-    return { valid: false, errors };
++    return { valid: false, errors: errors.length > 0 ? errors : ["Unknown validation error"] };
+   } catch (error) {
+     return {
+       valid: false,
+diff --git a/typescript/packages/extensions/src/bazaar/index.ts b/typescript/packages/extensions/src/bazaar/index.ts
+index f8c3a8b..0c88e18 100644
+--- a/typescript/packages/extensions/src/bazaar/index.ts
++++ b/typescript/packages/extensions/src/bazaar/index.ts
+@@ -123,6 +123,7 @@ export {
+   extractDiscoveryInfoFromExtension,
+   validateAndExtract,
+   type ValidationResult,
++  type ValidateDiscoveryExtensionOptions,
+   type SanitizedResourceServiceMetadata,
+   type DiscoveredHTTPResource,
+   type DiscoveredMCPResource,
+diff --git a/typescript/packages/extensions/test/bazaarSchemaValidationNoCodegen.test.ts b/typescript/packages/extensions/test/bazaarSchemaValidationNoCodegen.test.ts
+new file mode 100644
+index 0000000..9693fe7
+--- /dev/null
++++ b/typescript/packages/extensions/test/bazaarSchemaValidationNoCodegen.test.ts
+@@ -0,0 +1,424 @@
++/**
++ * Regression tests for x402-foundation/x402#3446.
++ *
++ * Cloudflare Workers (workerd) forbid dynamic code generation, so any validator that
++ * relies on `new Function()` / `eval` cannot compile a schema inside a request. These
++ * tests simulate that constraint by replacing the global `Function` constructor with one
++ * that throws the same error workerd raises, and count every attempt, so a regression
++ * back to a code-generating validator fails here instead of only in production logs.
++ *
++ * No wallet, facilitator, payment or secret is involved.
++ */
++
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import type { RoutesConfig } from "@x402/core/server";
++import {
++  declareDiscoveryExtension,
++  validateBazaarRouteExtensions,
++  validateDiscoveryExtension,
++} from "../src/bazaar/index";
++import type { DiscoveryExtension } from "../src/bazaar/types";
++
++const WORKERD_MESSAGE = "Code generation from strings disallowed for this context";
++
++let codegenAttempts = 0;
++const RealFunction = globalThis.Function;
++
++/**
++ * Stand-in for the global Function constructor on a runtime that forbids code generation.
++ * Records the attempt and throws the same EvalError workerd raises.
++ *
++ * @returns Never returns; always throws
++ */
++function ForbiddenFunction(): never {
++  codegenAttempts++;
++  throw new EvalError(WORKERD_MESSAGE);
++}
++
++beforeEach(() => {
++  codegenAttempts = 0;
++  vi.stubGlobal("Function", ForbiddenFunction);
++});
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++  expect(globalThis.Function).toBe(RealFunction);
++});
++
++const validExtension: DiscoveryExtension = {
++  schema: {
++    type: "object",
++    properties: { name: { type: "string" } },
++    required: ["name"],
++  },
++  info: { name: "demo" },
++} as unknown as DiscoveryExtension;
++
++/**
++ * Builds a discovery extension whose info violates the supplied schema in a specific way.
++ *
++ * @param info - The info object to validate against a fixed name/count schema
++ * @returns A discovery extension with a strict schema and the given info
++ */
++function extensionWithInfo(info: unknown): DiscoveryExtension {
++  return {
++    schema: {
++      $schema: "https://json-schema.org/draft/2020-12/schema",
++      type: "object",
++      properties: {
++        name: { type: "string" },
++        kind: { type: "string", const: "http" },
++        count: { type: "integer", minimum: 1 },
++      },
++      required: ["name", "kind"],
++      additionalProperties: false,
++    },
++    info,
++  } as unknown as DiscoveryExtension;
++}
++
++describe("validateDiscoveryExtension without dynamic code generation (#3446)", () => {
++  it("validates a correct extension without attempting code generation", () => {
++    const result = validateDiscoveryExtension(validExtension);
++    expect(result).toEqual({ valid: true });
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("validates a declareDiscoveryExtension() result (real Bazaar schema shape)", () => {
++    const declared = declareDiscoveryExtension({
++      method: "GET",
++      input: { query: "test" },
++      inputSchema: { properties: { query: { type: "string" } } },
++    });
++    const result = validateDiscoveryExtension(declared.bazaar);
++    expect(result).toEqual({ valid: true });
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("never reports the runtime limitation as a schema error", () => {
++    const result = validateDiscoveryExtension(validExtension);
++    expect(result.errors ?? []).not.toContainEqual(expect.stringContaining(WORKERD_MESSAGE));
++  });
++
++  it("does not attempt code generation on repeated calls or distinct schemas", () => {
++    for (let i = 0; i < 25; i++) {
++      const ext = {
++        schema: { type: "object", properties: { [`field${i}`]: { type: "number" } } },
++        info: { [`field${i}`]: i },
++      } as unknown as DiscoveryExtension;
++      expect(validateDiscoveryExtension(ext).valid).toBe(true);
++    }
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("still rejects invalid info under a supported schema (no fallback to valid)", () => {
++    const missing = validateDiscoveryExtension(extensionWithInfo({ kind: "http" }));
++    expect(missing.valid).toBe(false);
++    expect(missing.errors?.some(e => e.includes("name"))).toBe(true);
++
++    const wrongType = validateDiscoveryExtension(extensionWithInfo({ name: 5, kind: "http" }));
++    expect(wrongType.valid).toBe(false);
++    expect(wrongType.errors?.some(e => e.startsWith("/name:"))).toBe(true);
++
++    const wrongConst = validateDiscoveryExtension(extensionWithInfo({ name: "a", kind: "mcp" }));
++    expect(wrongConst.valid).toBe(false);
++    expect(wrongConst.errors?.some(e => e.startsWith("/kind:"))).toBe(true);
++
++    const belowMin = validateDiscoveryExtension(
++      extensionWithInfo({ name: "a", kind: "http", count: 0 }),
++    );
++    expect(belowMin.valid).toBe(false);
++    expect(belowMin.errors?.some(e => e.startsWith("/count:"))).toBe(true);
++
++    const extra = validateDiscoveryExtension(
++      extensionWithInfo({ name: "a", kind: "http", extra: true }),
++    );
++    expect(extra.valid).toBe(false);
++
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("reports the (root) path for top-level errors, matching the previous format", () => {
++    const result = validateDiscoveryExtension(extensionWithInfo({ kind: "http" }));
++    expect(result.valid).toBe(false);
++    expect(result.errors?.some(e => e.startsWith("(root):"))).toBe(true);
++  });
++
++  it("rejects a non-object schema instead of treating it as unconstrained", () => {
++    for (const schema of [true, "x", 42, null, undefined, ["a"]]) {
++      const result = validateDiscoveryExtension({
++        schema,
++        info: { anything: 1 },
++      } as unknown as DiscoveryExtension);
++      expect(result.valid).toBe(false);
++      expect(result.errors?.[0]).toContain("schema must be a JSON Schema object");
++    }
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("still rejects external $ref/$id references before validating", () => {
++    const result = validateDiscoveryExtension({
++      schema: { type: "object", properties: { a: { $ref: "https://evil.example/s.json" } } },
++      info: { a: 1 },
++    } as unknown as DiscoveryExtension);
++    expect(result.valid).toBe(false);
++    expect(result.errors?.[0]).toContain("external $ref/$id");
++  });
++
++  it("reports an unresolvable same-document $ref as a schema failure, not as valid", () => {
++    const result = validateDiscoveryExtension({
++      schema: { type: "object", properties: { a: { $ref: "#/$defs/missing" } } },
++      info: { a: 1 },
++    } as unknown as DiscoveryExtension);
++    expect(result.valid).toBe(false);
++    expect(result.errors?.[0]).toMatch(/^Schema validation failed: /);
++    expect(result.errors?.[0]).not.toContain(WORKERD_MESSAGE);
++  });
++
++  it("reports a malformed pattern as a schema failure, not as valid", () => {
++    const result = validateDiscoveryExtension({
++      schema: { type: "object", properties: { a: { type: "string", pattern: "(" } } },
++      info: { a: "x" },
++    } as unknown as DiscoveryExtension);
++    expect(result.valid).toBe(false);
++    expect(result.errors?.[0]).toMatch(/^Schema validation failed: /);
++  });
++
++  it("rejects an unsupported $schema dialect explicitly instead of validating anyway", () => {
++    const result = validateDiscoveryExtension({
++      schema: {
++        $schema: "http://json-schema.org/draft-04/schema#",
++        type: "object",
++        properties: { a: { type: "string" } },
++      },
++      info: { a: "x" },
++    } as unknown as DiscoveryExtension);
++    expect(result.valid).toBe(false);
++    expect(result.errors?.[0]).toContain("unsupported $schema dialect");
++
++    const ok = validateDiscoveryExtension({
++      schema: {
++        $schema: "https://json-schema.org/draft/2020-12/schema",
++        type: "object",
++        properties: { a: { type: "string" } },
++      },
++      info: { a: "x" },
++    } as unknown as DiscoveryExtension);
++    expect(ok).toEqual({ valid: true });
++    expect(codegenAttempts).toBe(0);
++  });
++
++  const formatSchema = {
++    type: "object",
++    properties: {
++      url: { type: "string", format: "uri" },
++      at: { type: "string", format: "date-time" },
++    },
++  };
++
++  it("treats `format` as an annotation by default (compatible with <= 2.25.0)", () => {
++    // The Ajv-based implementation had no format plugin, so `format` was ignored. Keep that
++    // default so payloads accepted before this change are still accepted.
++    const ok = validateDiscoveryExtension({
++      schema: formatSchema,
++      info: { url: "https://example.com/x", at: "2026-09-13T22:00:00Z" },
++    } as unknown as DiscoveryExtension);
++    expect(ok).toEqual({ valid: true });
++
++    const lenient = validateDiscoveryExtension({
++      schema: formatSchema,
++      info: { url: "not a uri", at: "yesterday" },
++    } as unknown as DiscoveryExtension);
++    expect(lenient).toEqual({ valid: true });
++
++    // Type checks on the same properties still apply.
++    const wrongType = validateDiscoveryExtension({
++      schema: formatSchema,
++      info: { url: 42 },
++    } as unknown as DiscoveryExtension);
++    expect(wrongType.valid).toBe(false);
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("asserts well-known string formats (uri, date-time) when opted in", () => {
++    const ok = validateDiscoveryExtension(
++      {
++        schema: formatSchema,
++        info: { url: "https://example.com/x", at: "2026-09-13T22:00:00Z" },
++      } as unknown as DiscoveryExtension,
++      { assertFormats: true },
++    );
++    expect(ok).toEqual({ valid: true });
++
++    const bad = validateDiscoveryExtension(
++      {
++        schema: formatSchema,
++        info: { url: "not a uri", at: "yesterday" },
++      } as unknown as DiscoveryExtension,
++      { assertFormats: true },
++    );
++    expect(bad.valid).toBe(false);
++    expect(bad.errors?.some(e => e.startsWith("/url:"))).toBe(true);
++    expect(bad.errors?.some(e => e.startsWith("/at:"))).toBe(true);
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("only strips `format` in keyword position, not property names or literal values", () => {
++    const schema = {
++      type: "object",
++      properties: {
++        format: { type: "string" },
++        meta: { const: { format: "x" } },
++        tags: { type: "array", items: { type: "string", format: "uuid" }, enum: [["format"]] },
++      },
++      required: ["format"],
++    };
++    // A property literally named "format" is still required and type-checked.
++    expect(
++      validateDiscoveryExtension({ schema, info: {} } as unknown as DiscoveryExtension).valid,
++    ).toBe(false);
++    expect(
++      validateDiscoveryExtension({ schema, info: { format: 5 } } as unknown as DiscoveryExtension)
++        .valid,
++    ).toBe(false);
++    // `const` / `enum` payloads containing a "format" key are data, compared verbatim.
++    expect(
++      validateDiscoveryExtension({
++        schema,
++        info: { format: "f", meta: { format: "x" }, tags: ["format"] },
++      } as unknown as DiscoveryExtension),
++    ).toEqual({ valid: true });
++    expect(
++      validateDiscoveryExtension({
++        schema,
++        info: { format: "f", meta: { format: "y" } },
++      } as unknown as DiscoveryExtension).valid,
++    ).toBe(false);
++    // The nested `format: "uuid"` under items is stripped by default and asserted on opt-in.
++    const ext = {
++      schema,
++      info: { format: "f", tags: ["format"] },
++    } as unknown as DiscoveryExtension;
++    expect(validateDiscoveryExtension(ext)).toEqual({ valid: true });
++    expect(validateDiscoveryExtension(ext, { assertFormats: true }).valid).toBe(false);
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("pins `multipleOf` semantics for fractional divisors", () => {
++    // The interpreter accepts a quotient within ~1.2e-7 of an integer. The previous Ajv-based
++    // implementation compared the raw IEEE-754 quotient, so 0.3 / 0.1 = 2.9999999999999996
++    // was rejected there. This test records the chosen behaviour so a change is visible.
++    const ext = (multipleOf: number, value: number) =>
++      ({
++        schema: { type: "object", properties: { n: { type: "number", multipleOf } } },
++        info: { n: value },
++      }) as unknown as DiscoveryExtension;
++    expect(validateDiscoveryExtension(ext(0.1, 0.3))).toEqual({ valid: true });
++    expect(validateDiscoveryExtension(ext(0.01, 0.07))).toEqual({ valid: true });
++    expect(validateDiscoveryExtension(ext(0.0001, 0.0075))).toEqual({ valid: true });
++    expect(validateDiscoveryExtension(ext(0.0001, 0.00751)).valid).toBe(false);
++    expect(validateDiscoveryExtension(ext(0.01, 0.075)).valid).toBe(false);
++    expect(validateDiscoveryExtension(ext(5, 10))).toEqual({ valid: true });
++    expect(validateDiscoveryExtension(ext(5, 7)).valid).toBe(false);
++    expect(codegenAttempts).toBe(0);
++  });
++});
++
++describe("validateBazaarRouteExtensions without dynamic code generation (#3446)", () => {
++  const accepts = [{ scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const }];
++
++  const validRoute = (query: string) => ({
++    accepts,
++    extensions: declareDiscoveryExtension({
++      method: "GET",
++      input: { [query]: "x" },
++      inputSchema: { properties: { [query]: { type: "string" } } },
++    }),
++  });
++
++  const malformedRoute = {
++    accepts,
++    // Declares a bazaar extension without a schema: structurally malformed.
++    extensions: { bazaar: { info: { input: { type: "http", method: "GET" } } } },
++  };
++
++  const invalidInfoRoute = {
++    accepts,
++    extensions: {
++      bazaar: {
++        info: { input: { type: "http", method: "GET", queryParams: { q: 1 } } },
++        schema: {
++          type: "object",
++          properties: {
++            input: {
++              type: "object",
++              properties: {
++                type: { type: "string", const: "http" },
++                method: { type: "string", enum: ["GET"] },
++                queryParams: {
++                  type: "object",
++                  properties: { q: { type: "string" } },
++                },
++              },
++              required: ["type", "method"],
++            },
++          },
++          required: ["input"],
++        },
++      },
++    },
++  };
++
++  /**
++   * Runs the startup validation for a route map and returns the warnings it emitted.
++   *
++   * @param routes - Route map to validate
++   * @returns The console.warn messages emitted, in order
++   */
++  function warningsFor(routes: Record<string, unknown>): string[] {
++    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
++    try {
++      validateBazaarRouteExtensions(routes as unknown as RoutesConfig);
++      return spy.mock.calls.map(call => String(call[0]));
++    } finally {
++      spy.mockRestore();
++    }
++  }
++
++  it("keeps structural and schema checks for every route, in any order, on repeat", () => {
++    const orders: Record<string, unknown>[] = [
++      { "GET /a": validRoute("a"), "GET /b": malformedRoute, "GET /c": validRoute("c") },
++      { "GET /c": validRoute("c"), "GET /b": malformedRoute, "GET /a": validRoute("a") },
++      { "GET /b": malformedRoute, "GET /a": validRoute("a"), "GET /c": validRoute("c") },
++    ];
++
++    for (let pass = 0; pass < 2; pass++) {
++      for (const routes of orders) {
++        const warnings = warningsFor(routes);
++        expect(warnings).toHaveLength(1);
++        expect(warnings[0]).toContain('Route "GET /b"');
++        expect(warnings[0]).toContain("malformed");
++      }
++    }
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("still reports invalid info against a supported schema after valid routes", () => {
++    const warnings = warningsFor({
++      "GET /a": validRoute("a"),
++      "GET /bad": invalidInfoRoute,
++      "GET /c": validRoute("c"),
++    });
++    expect(warnings).toHaveLength(1);
++    expect(warnings[0]).toContain('Route "GET /bad"');
++    expect(warnings[0]).toContain("/input/queryParams/q");
++    expect(warnings[0]).not.toContain(WORKERD_MESSAGE);
++    expect(codegenAttempts).toBe(0);
++  });
++
++  it("emits no runtime-limitation warnings for valid routes", () => {
++    const warnings = warningsFor({ "GET /a": validRoute("a"), "POST /b": validRoute("b") });
++    expect(warnings).toEqual([]);
++    expect(codegenAttempts).toBe(0);
++  });
++});
