@@ -1,0 +1,1 @@
+{"name":"x402-3446-repro","private":true,"type":"module","dependencies":{"@cfworker/json-schema":"^4.1.1","@x402/extensions":"^2.25.0","wrangler":"^4.131.1"}}
