@@ -1,0 +1,4 @@
+name = "x402-3446-followup"
+main = "src/worker-all.js"
+compatibility_date = "2026-09-07"
+compatibility_flags = ["nodejs_compat"]
