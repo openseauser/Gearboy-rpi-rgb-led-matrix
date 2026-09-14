@@ -1,0 +1,357 @@
+{
+ "chromium": "141.0.7390.37",
+ "results": [
+  {
+   "case": "200 json",
+   "id": "1033.2",
+   "url": "/favicon.ico",
+   "type": "Other",
+   "status": 404,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 14,
+   "events": "requestWillBeSent > responseReceived(404) > dataReceived > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 14,
+    "base64": false
+   }
+  },
+  {
+   "case": "200 json",
+   "id": "1033.3",
+   "url": "/json",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "200 empty body",
+   "id": "1033.4",
+   "url": "/empty200",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 0,
+   "events": "requestWillBeSent > responseReceived(200) > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 0,
+    "base64": false
+   }
+  },
+  {
+   "case": "204 no content",
+   "id": "1033.5",
+   "url": "/204",
+   "type": "Fetch",
+   "status": 204,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 0,
+   "events": "requestWillBeSent > responseReceived(204) > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 0,
+    "base64": false
+   }
+  },
+  {
+   "case": "500 json",
+   "id": "1033.6",
+   "url": "/err500",
+   "type": "Fetch",
+   "status": 500,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 16,
+   "events": "requestWillBeSent > responseReceived(500) > dataReceived > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 16,
+    "base64": false
+   }
+  },
+  {
+   "case": "404 json",
+   "id": "1033.7",
+   "url": "/nope",
+   "type": "Fetch",
+   "status": 404,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 14,
+   "events": "requestWillBeSent > responseReceived(404) > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 14,
+    "base64": false
+   }
+  },
+  {
+   "case": "etag first (200)",
+   "id": "1033.8",
+   "url": "/etag",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "etag revalidate (304)",
+   "id": "1033.9",
+   "url": "/etag",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "cached first (200)",
+   "id": "1033.10",
+   "url": "/cached",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "cached second (memory/disk)",
+   "id": "1033.11",
+   "url": "/cached",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": true,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "redirect chain 301>302>200",
+   "id": "1033.12",
+   "url": "/json",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > requestWillBeSent(redirect 301) > requestWillBeSent(redirect 302) > responseReceived(200) > dataReceived > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "data: URL",
+   "id": "1033.13",
+   "url": "data:application/json,%7B%22d%22%3A1%7D",
+   "type": "Other",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 7,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 7,
+    "base64": false
+   }
+  },
+  {
+   "case": "connection reset",
+   "id": "1033.14",
+   "url": "/reset",
+   "type": "Fetch",
+   "servedFromCache": false,
+   "finished": false,
+   "failed": {
+    "errorText": "net::ERR_EMPTY_RESPONSE",
+    "canceled": false
+   },
+   "dataBytes": 0,
+   "events": "requestWillBeSent > loadingFailed(net::ERR_EMPTY_RESPONSE)",
+   "body": {
+    "ok": false,
+    "err": "cdpSession.send: Protocol error (Network.getResponseBody): No data found for resource with given identifier"
+   }
+  },
+  {
+   "case": "abort via AbortController mid-body",
+   "id": "1033.15",
+   "url": "/slow",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": false,
+   "failed": {
+    "errorText": "net::ERR_ABORTED",
+    "canceled": true
+   },
+   "dataBytes": 9,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFailed(net::ERR_ABORTED,canceled)",
+   "body": {
+    "ok": false,
+    "err": "cdpSession.send: Protocol error (Network.getResponseBody): No data found for resource with given identifier"
+   }
+  },
+  {
+   "case": "navigation cancels in-flight fetch",
+   "id": "1033.16",
+   "url": "/slow",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": false,
+   "servedFromCache": false,
+   "finished": false,
+   "failed": {
+    "errorText": "net::ERR_ABORTED",
+    "canceled": true
+   },
+   "dataBytes": 9,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFailed(net::ERR_ABORTED,canceled)",
+   "body": {
+    "ok": false,
+    "err": "cdpSession.send: Protocol error (Network.getResponseBody): No resource with given identifier found"
+   }
+  },
+  {
+   "case": "sw synthesized response",
+   "id": "1033.20",
+   "url": "/sw-synth",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": true,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 13,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 13,
+    "base64": false
+   }
+  },
+  {
+   "case": "sw pass-through fetch",
+   "id": "1033.21",
+   "url": "/sw-pass",
+   "type": "Fetch",
+   "status": 200,
+   "fromDiskCache": false,
+   "fromSW": true,
+   "servedFromCache": false,
+   "finished": true,
+   "dataBytes": 17,
+   "events": "requestWillBeSent > responseReceived(200) > dataReceived > loadingFinished",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "body after 60 later requests (same page)",
+   "id": "1033.23",
+   "url": "/json",
+   "status": 200,
+   "finished": true,
+   "events": "…",
+   "body": {
+    "ok": true,
+    "len": 17,
+    "base64": false
+   }
+  },
+  {
+   "case": "body after same-origin navigation",
+   "id": "1033.84",
+   "url": "/json",
+   "status": 200,
+   "finished": true,
+   "events": "…",
+   "body": {
+    "ok": false,
+    "err": "cdpSession.send: Protocol error (Network.getResponseBody): No resource with given identifier found"
+   }
+  },
+  {
+   "case": "target closed (popup) then getResponseBody",
+   "id": "1032.2",
+   "events": "…",
+   "body": {
+    "before_close": {
+     "ok": true,
+     "len": 17
+    },
+    "after_close": {
+     "ok": false,
+     "err": "cdpSession.send: Target page, context or browser has been closed"
+    }
+   }
+  }
+ ]
+}
